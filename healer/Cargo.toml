@@ -1,0 +1,37 @@
+[package]
+name = "healer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+aya = { git = "https://github.com/aya-rs/aya", features = ["async_tokio"] }
+aya-log = { git = "https://github.com/aya-rs/aya" }
+healer-common = {path = "../healer-common", features = ["user"] }
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+daemonize = "0.5"
+reqwest = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+chrono = "0.4"
+tracing = "0.1"
+async-trait = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json", "time"] }
+tracing-appender = "0.2"
+nix = { version = "0.29.0", features = ["signal", "process"] }
+users = "0.11.0"
+bytes = "1.10.1"
+futures = "0.3.31"
+sysinfo = "0.36.0"
+env_logger = "0.11.8"
+
+
+[build-dependencies]
+aya-build = { git = "https://github.com/aya-rs/aya" }
+anyhow = "1"
+healer-ebpf = { path = "../healer-ebpf" }
+
+[[bin]]
+name = "healer"
+path = "src/main.rs"

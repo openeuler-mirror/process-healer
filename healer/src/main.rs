@@ -1,0 +1,46 @@
+mod config;
+mod config_manager;
+mod core_logic;
+mod daemon_handler;
+mod event_bus;
+mod logger;
+mod monitor;
+mod monitor_manager;
+mod service_manager;
+mod signal_handler;
+mod subscriber;
+mod utils;
+use config::AppConfig;
+use daemon_handler::run_as_daemon;
+use tokio::sync::RwLock;
+
+fn main() {
+    println!("Attempting to load the config");
+
+    // let config_file_path = Path::new("config.yaml");
+    let config_file_path_str = "config.yaml";
+    let absolue_config_path = match std::fs::canonicalize(config_file_path_str) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!(
+                "Error: No such file or directory about configure '{}': {}",
+                config_file_path_str, e
+            );
+            std::process::exit(1);
+        }
+    };
+    let initial_config = AppConfig::load_from_file(&absolue_config_path).expect("初始配置加载失败");
+    let shared_config = std::sync::Arc::new(RwLock::new(initial_config));
+    let config_for_closure = std::sync::Arc::clone(&shared_config);
+    let path_for_closure = absolue_config_path.clone();
+    let core_logic_closure =
+        move || core_logic::async_runtime(config_for_closure, path_for_closure);
+    match run_as_daemon(shared_config, core_logic_closure) {
+        Ok(_) => {
+            println!("Main program: Core logic quit");
+        }
+        Err(e) => {
+            println!("Main program: Core logic error with {:?}", e);
+        }
+    }
+}
