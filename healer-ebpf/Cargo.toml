@@ -15,3 +15,8 @@ which = { version = "8.0.0", default-features = false, features = ["real-sys"] }
 [[bin]]
 name = "healer"
 path = "src/main.rs"
+required-features = ["build-ebpf"]
+
+[features]
+# 默认不构建 eBPF 二进制，除非显式开启该 feature。
+build-ebpf = []

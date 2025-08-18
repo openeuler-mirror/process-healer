@@ -1,24 +1,15 @@
-use crate::{
-    config::{self, NetworkMonitorConfig},
-    event_bus::ProcessEvent,
-    monitor::Monitor,
-};
+use crate::publisher::Publisher;
+use crate::{config::NetworkMonitorConfig, event_bus::ProcessEvent, monitor::Monitor};
 use async_trait::async_trait;
-use reqwest::Response;
-use std::{io::Read, result};
-use tokio::{io::AsyncReadExt, sync::broadcast};
-use tokio::{net::TcpStream, time};
-use tracing::{debug, error, info, warn};
+use tokio::{sync::broadcast, time};
+use tracing::{debug, info, warn};
 pub struct NetworkMonitor {
     config: NetworkMonitorConfig,
     event_tx: broadcast::Sender<ProcessEvent>,
 }
 impl NetworkMonitor {
     pub fn new(config: NetworkMonitorConfig, event_tx: broadcast::Sender<ProcessEvent>) -> Self {
-        Self {
-            config,
-            event_tx,
-        }
+        Self { config, event_tx }
     }
     pub fn check_interval(&self) -> u64 {
         self.config.interval_secs
@@ -75,7 +66,7 @@ impl NetworkMonitor {
             self.config.name, self.config.target_url
         );
 
-        match self.event_tx.send(event) {
+        match self.publish(event) {
             Ok(receiver_count) => {
                 debug!(
                     "[{}] Sent ProcessDisconnected event for HTTP {} to {} receivers",
@@ -99,5 +90,14 @@ impl Monitor for NetworkMonitor {
     }
     fn name(&self) -> String {
         self.config.name.clone()
+    }
+}
+
+impl Publisher for NetworkMonitor {
+    fn publish(
+        &self,
+        event: ProcessEvent,
+    ) -> Result<usize, broadcast::error::SendError<ProcessEvent>> {
+        self.event_tx.send(event)
     }
 }

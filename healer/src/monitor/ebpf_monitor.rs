@@ -1,5 +1,5 @@
 use super::Monitor;
-use crate::{config::EbpfMonitorConfig, event_bus::ProcessEvent, utils};
+use crate::{config::EbpfMonitorConfig, event_bus::ProcessEvent, publisher::Publisher, utils};
 use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -23,6 +23,21 @@ pub struct EbpfMonitor {
     process_name_mapping: Arc<Mutex<collections::HashMap<String, String>>>, // truncated_name -> full_config_name
     task_handles: Vec<tokio::task::JoinHandle<()>>,                         // 保存后台任务句柄
     shutdown_flag: Arc<AtomicBool>,                                         // 关闭标志
+    out_tx: broadcast::Sender<ProcessEvent>,                                // 发布通道
+}
+
+#[derive(Clone)]
+struct TxPublisher {
+    tx: broadcast::Sender<ProcessEvent>,
+}
+
+impl Publisher for TxPublisher {
+    fn publish(
+        &self,
+        event: ProcessEvent,
+    ) -> Result<usize, broadcast::error::SendError<ProcessEvent>> {
+        self.tx.send(event)
+    }
 }
 
 impl EbpfMonitor {
@@ -52,7 +67,9 @@ impl EbpfMonitor {
         let process_name_mapping = Arc::new(Mutex::new(collections::HashMap::new()));
         for cpu_id in online_cpus().unwrap() {
             let perf_buf = events.open(cpu_id, None)?;
-            let tx_clone = event_tx.clone();
+            let publisher = TxPublisher {
+                tx: event_tx.clone(),
+            };
             let fd = perf_buf.as_raw_fd();
             let async_fd = AsyncFd::new(fd)?;
             let shutdown_flag_clone = shutdown_flag.clone();
@@ -100,7 +117,7 @@ impl EbpfMonitor {
                                                 cpu_id, event.pid, comm_str
                                             );
                                             let send_result =
-                                                tx_clone.send(ProcessEvent::ProcessDown {
+                                                publisher.publish(ProcessEvent::ProcessDown {
                                                     name: process_name.clone(),
                                                     pid: event.pid,
                                                 });
@@ -173,6 +190,7 @@ impl EbpfMonitor {
             process_name_mapping,
             task_handles,
             shutdown_flag,
+            out_tx: event_tx,
         })
     }
     pub async fn wait_and_publish(&mut self) {}
@@ -355,5 +373,14 @@ impl Monitor for EbpfMonitor {
     fn name(&self) -> String {
         // self.config.name.clone()
         "EbpfMonitor".to_string()
+    }
+}
+
+impl Publisher for EbpfMonitor {
+    fn publish(
+        &self,
+        event: ProcessEvent,
+    ) -> Result<usize, broadcast::error::SendError<ProcessEvent>> {
+        self.out_tx.send(event)
     }
 }

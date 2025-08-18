@@ -1,4 +1,3 @@
-use crate::config::ProcessConfig;
 use std::path::PathBuf;
 use tokio::sync::broadcast;
 
@@ -6,9 +5,25 @@ const CHANNEL_CAPACITY: usize = 128;
 
 #[derive(Clone, Debug)]
 pub enum ProcessEvent {
-    ProcessDown { name: String, pid: u32 },
-    ProcessDisconnected { name: String, url: String },
+    ProcessDown {
+        name: String,
+        pid: u32,
+    },
+    ProcessDisconnected {
+        name: String,
+        url: String,
+    },
+    #[allow(dead_code)]
+    ProcessDependencyDetected {
+        name: String,
+        dependencies: Vec<String>,
+    },
+    #[allow(dead_code)]
+    ProcessRestartSuccess {},
+    #[allow(dead_code)]
+    ProcessRestartFailed {},
 }
+#[allow(dead_code)]
 pub struct RestartProcessConfig {
     pub name: String,
     pub command: String,

@@ -1,11 +1,13 @@
 mod config;
 mod config_manager;
+mod coordinator; // expose dependency coordinator
 mod core_logic;
 mod daemon_handler;
 mod event_bus;
 mod logger;
 mod monitor;
 mod monitor_manager;
+mod publisher;
 mod service_manager;
 mod signal_handler;
 mod subscriber;
@@ -17,7 +19,6 @@ use tokio::sync::RwLock;
 fn main() {
     println!("Attempting to load the config");
 
-    // let config_file_path = Path::new("config.yaml");
     let config_file_path_str = "config.yaml";
     let absolue_config_path = match std::fs::canonicalize(config_file_path_str) {
         Ok(path) => path,

@@ -1,9 +1,6 @@
 use crate::daemon_handler::DaemonConfig;
-use crate::monitor::ebpf_monitor;
-use nix::libc::SKF_NET_OFF;
 use serde::Deserialize;
 use std::fs;
-use std::ops::Not;
 use std::path::{Path, PathBuf};
 
 // 顶层配置结构体
@@ -30,6 +27,58 @@ pub struct ProcessConfig {
     pub monitor: MonitorConfig,
     #[serde(default)]
     pub recovery: RecoveryConfig,
+    #[serde(default)]
+    pub dependencies: Vec<RawDependency>,
+}
+
+// ---------------- Dependency Config ----------------
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum RawDependency {
+    Simple(String),
+    Detailed(DependencyConfig),
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct DependencyConfig {
+    pub target: String,
+    #[serde(default = "default_kind")]
+    pub kind: DependencyKind,
+    #[serde(default = "default_true")]
+    pub hard: bool,
+    #[serde(default = "default_max_wait_secs")]
+    pub max_wait_secs: u64,
+    #[serde(default = "default_on_failure")]
+    pub on_failure: OnFailure,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DependencyKind {
+    Requires,
+    After,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OnFailure {
+    Abort,
+    Skip,
+    Degrade,
+}
+
+fn default_kind() -> DependencyKind {
+    DependencyKind::Requires
+}
+fn default_true() -> bool {
+    true
+}
+fn default_max_wait_secs() -> u64 {
+    30
+}
+fn default_on_failure() -> OnFailure {
+    OnFailure::Abort
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -92,7 +141,6 @@ pub struct EbpfMonitorConfig {
 #[derive(Debug, Clone)]
 pub struct NetworkMonitorConfig {
     pub name: String,
-    // pub pid_file_path: PathBuf,
     pub target_url: String, // 目标URL
     pub interval_secs: u64, //检查的频率间隔
 }
@@ -124,7 +172,7 @@ impl ProcessConfig {
     }
 
     pub fn get_ebpf_monitor_config(&self) -> Option<EbpfMonitorConfig> {
-        if let MonitorConfig::Ebpf(ebpf_fields) = &self.monitor {
+        if let MonitorConfig::Ebpf(_ebpf_fields) = &self.monitor {
             Some(EbpfMonitorConfig {
                 name: self.name.clone(),
                 command: self.command.clone(),
@@ -144,6 +192,22 @@ impl ProcessConfig {
         } else {
             None
         }
+    }
+
+    pub fn resolved_dependencies(&self) -> Vec<DependencyConfig> {
+        self.dependencies
+            .iter()
+            .map(|raw| match raw {
+                RawDependency::Simple(name) => DependencyConfig {
+                    target: name.clone(),
+                    kind: default_kind(),
+                    hard: default_true(),
+                    max_wait_secs: default_max_wait_secs(),
+                    on_failure: default_on_failure(),
+                },
+                RawDependency::Detailed(d) => d.clone(),
+            })
+            .collect()
     }
 }
 

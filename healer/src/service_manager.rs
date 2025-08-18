@@ -1,5 +1,6 @@
 use crate::{
     config::AppConfig,
+    coordinator::dependency_coordinator::DependencyCoordinator,
     event_bus::ProcessEvent,
     subscriber::{Subscriber, process_healer::ProcessHealer},
 };
@@ -16,19 +17,23 @@ pub struct ServiceManager;
 impl ServiceManager {
     /// 启动所有持久性后台服务
     pub fn spawn_persistent_services(
-        event_sender: &broadcast::Sender<ProcessEvent>,
+        monitor_event_sender: &broadcast::Sender<ProcessEvent>,
+        coordinator_event_sender: &broadcast::Sender<ProcessEvent>,
         config: &Arc<RwLock<AppConfig>>,
     ) {
-        Self::spawn_process_healer(event_sender, config);
+        // 先启动协调器（监听 monitor_event_sender，输出到 coordinator_event_sender）
+        Self::spawn_dependency_coordinator(monitor_event_sender, coordinator_event_sender, config);
+        // Healer 监听协调器输出通道
+        Self::spawn_process_healer(coordinator_event_sender, config);
         Self::spawn_zombie_reaper();
     }
 
     /// 启动进程自愈服务
     fn spawn_process_healer(
-        event_sender: &broadcast::Sender<ProcessEvent>,
+        coordinator_event_sender: &broadcast::Sender<ProcessEvent>,
         config: &Arc<RwLock<AppConfig>>,
     ) {
-        let healer_receiver = event_sender.subscribe();
+        let healer_receiver = coordinator_event_sender.subscribe();
         let healer_config = Arc::clone(config);
 
         tokio::spawn(async move {
@@ -51,6 +56,22 @@ impl ServiceManager {
                     }
                 }
             }
+        });
+    }
+
+    /// 启动依赖协调器
+    fn spawn_dependency_coordinator(
+        monitor_event_sender: &broadcast::Sender<ProcessEvent>,
+        coordinator_event_sender: &broadcast::Sender<ProcessEvent>,
+        config: &Arc<RwLock<AppConfig>>,
+    ) {
+        let in_rx = monitor_event_sender.subscribe();
+        let out_tx = coordinator_event_sender.clone();
+        let cfg = Arc::clone(config);
+        tokio::spawn(async move {
+            let coordinator = DependencyCoordinator::new(in_rx, out_tx, cfg);
+            tracing::info!("ServiceManager: DependencyCoordinator service started.");
+            coordinator.run_loop().await;
         });
     }
 
