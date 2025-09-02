@@ -1,0 +1,17 @@
+[package]
+name = "healer-ebpf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aya-ebpf = { git = "https://github.com/aya-rs/aya" }
+aya-log-ebpf = { git = "https://github.com/aya-rs/aya" }
+healer-common = { path = "../healer-common" }
+
+[build-dependencies]
+which = { version = "8.0.0", default-features = false, features = ["real-sys"] }
+
+
+[[bin]]
+name = "healer"
+path = "src/main.rs"

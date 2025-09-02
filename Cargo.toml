@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "healer",
+    "healer-ebpf",
+    "healer-common",
+]
+resolver = "2"
+default-members = ["healer", "healer-common"]
+
+[profile.release.package.healer-ebpf]
+debug = 2
+codegen-units = 1

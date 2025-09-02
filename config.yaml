@@ -1,0 +1,61 @@
+# healer/config.yaml
+
+# 全局配置
+log_level: "info"
+log_directory: "/var/log/healer"
+pid_file_directory: "/var/run/healer" # healer 守护进程自己的 PID 文件目录
+working_directory: "/"
+
+# 需要监控和自愈的进程列表
+processes:
+
+  # - name: "simple_counter"
+  #   enabled: true
+  #   command: "/home/lxq/ospp/simple_test_process/target/debug/simple_test_process"
+  #   args: []
+  #   run_as_root: false
+  #   run_as_user: "lxq"
+  #   monitor:
+  #     type: "pid" # 使用 PID 文件进行监控
+      
+  #     pid_file_path: "/var/run/healer/simple_counter.pid" 
+      
+  #     interval_secs: 3
+
+  #   # 恢复/重启策略配置
+  #   recovery:
+  #     type: "regular"
+  #     retries: 3 # 60秒内最多重试3次
+  #     retry_window_secs: 60
+  #     cooldown_secs: 180 # 如果发生熔断，冷却3分钟
+  
+  # - name: "simple_test_process"
+  #   enabled: true
+  #   command: "/home/lxq/ospp/simple_test_process/target/debug/simple_test_process"
+  #   args: []
+  #   run_as_root: false
+  #   run_as_user: "lxq"
+  #   monitor:
+  #     type: "ebpf"
+  #   recovery:
+  #     type: "regular"
+  #     retries: 3 # 60秒内最多重试3次
+  #     retry_window_secs: 60
+  #     cooldown_secs: 180 # 如果发生熔断，冷却3分钟
+      
+
+  - name: "simple_net_process"
+    enabled: true
+    command: "/home/lxq/anaconda3/bin/python"
+    args: ["/home/lxq/ospp/net-simple-test/main.py"]
+    run_as_root: false
+    run_as_user: "lxq"
+    monitor:
+      type: "network"
+      target_url: "http://127.0.0.1:8080/health"
+      interval_secs: 5
+    recovery:
+      type: "regular"
+      retries: 3 # 60秒内最多重试3次  
+      retry_window_secs: 60
+      cooldown_secs: 180 # 如果发生熔断，冷却3分钟
