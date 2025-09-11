@@ -29,20 +29,26 @@ processes:
   #     retry_window_secs: 60
   #     cooldown_secs: 180 # 如果发生熔断，冷却3分钟
   
-  # - name: "simple_test_process"
-  #   enabled: true
-  #   command: "/home/lxq/ospp/simple_test_process/target/debug/simple_test_process"
-  #   args: []
-  #   run_as_root: false
-  #   run_as_user: "lxq"
-  #   monitor:
-  #     type: "ebpf"
-  #   recovery:
-  #     type: "regular"
-  #     retries: 3 # 60秒内最多重试3次
-  #     retry_window_secs: 60
-  #     cooldown_secs: 180 # 如果发生熔断，冷却3分钟
-      
+  - name: "simple_test_process"
+    enabled: true
+    command: "/home/lxq/ospp/simple_test_process/target/debug/simple_test_process"
+    #ebpf由于每次重启后的pid都是变化的，所以检测是否是被监测进程需要依靠于进程名作为监测主键，默认名字是应用名，后续扩展
+    args: []
+    run_as_root: false
+    run_as_user: "lxq"
+    monitor:
+      type: "ebpf"
+    recovery:
+      type: "regular"
+      retries: 3 # 60秒内最多重试3次
+      retry_window_secs: 60
+      cooldown_secs: 180 # 如果发生熔断，冷却3分钟
+    dependencies:
+      - target: "simple_net_process"
+        kind: "requires"
+        hard: true
+        max_wait_secs: 25
+        on_failure: "abort"
 
   - name: "simple_net_process"
     enabled: true

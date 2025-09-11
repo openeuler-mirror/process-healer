@@ -39,15 +39,21 @@ async fn daemon_core_logic(config: Arc<RwLock<AppConfig>>, config_path: PathBuf)
     info!("Application Core Logic: Starting up and initializing components...");
 
     // 1. 创建事件总线
-    let event_sender = event_bus::create_event_sender();
+    // 事件通道拆分：monitors -> coordinator_in, coordinator_out -> healer
+    let monitor_event_sender = event_bus::create_event_sender();
+    let coordinator_event_sender = event_bus::create_event_sender();
     info!("Application Core Logic: Event bus created.");
 
     // 2. 初始化各个管理器，包括配置管理器喝监视器管理器
     let config_manager = ConfigManager::new(Arc::clone(&config), config_path);
-    let mut monitor_manager = MonitorManager::new(event_sender.clone()).await?;
+    let mut monitor_manager = MonitorManager::new(monitor_event_sender.clone()).await?;
 
     // 3. 启动持久性后台服务
-    ServiceManager::spawn_persistent_services(&event_sender, &config);
+    ServiceManager::spawn_persistent_services(
+        &monitor_event_sender,
+        &coordinator_event_sender,
+        &config,
+    );
     info!("Application Core Logic: Persistent services started.");
 
     // 4. 进行初始配置协调

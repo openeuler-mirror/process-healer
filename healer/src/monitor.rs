@@ -2,7 +2,6 @@ use async_trait::async_trait;
 pub mod ebpf_monitor;
 pub mod network_monitor;
 pub mod pid_monitor;
-use sysinfo::{RefreshKind, System};
 #[async_trait]
 pub trait Monitor: Send + Sync {
     // 启动并运行监控任务。

@@ -1,9 +1,8 @@
 // src/monitor/pid_monitor.rs
 
 use async_trait::async_trait;
-use nix::Error as NixError;
 use nix::errno::Errno;
-use nix::sys::signal::{Signal as NixSignal, kill};
+use nix::sys::signal::kill;
 use nix::unistd::Pid;
 use tokio::fs;
 use tokio::sync::broadcast;
@@ -13,6 +12,7 @@ use tracing::{debug, warn};
 use super::Monitor;
 use crate::config::PidMonitorConfig;
 use crate::event_bus::ProcessEvent;
+use crate::publisher::Publisher;
 use tracing::info;
 pub struct PidMonitor {
     config: PidMonitorConfig,
@@ -36,7 +36,7 @@ impl PidMonitor {
             self.config.name, pid
         );
 
-        match self.event_tx.send(event) {
+        match self.publish(event) {
             Ok(receiver_count) => {
                 debug!(
                     "[{}] Sent ProcessDown event for PID {} to {} receivers",
@@ -132,5 +132,14 @@ impl Monitor for PidMonitor {
     }
     async fn run(self) {
         self.monitor_task_loop().await;
+    }
+}
+
+impl Publisher for PidMonitor {
+    fn publish(
+        &self,
+        event: ProcessEvent,
+    ) -> Result<usize, broadcast::error::SendError<ProcessEvent>> {
+        self.event_tx.send(event)
     }
 }
