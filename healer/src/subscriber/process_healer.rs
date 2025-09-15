@@ -225,55 +225,71 @@ impl ProcessHealer {
                         }
                     }
                     State::Open => {
+                        let now = Instant::now();
+                        let cooldown_secs = {
+                            let cfg = self.app_config.read().await;
+                            cfg.get_process_config_for(name)
+                                .and_then(|p| match &p.recovery {
+                                    RecoveryConfig::Regular(fields) => Some(fields.cooldown_secs),
+                                    _ => None,
+                                })
+                                .unwrap_or(5)
+                        };
+
                         if let Some(cooldown_until) = stats.in_cooldown_until {
-                            if Instant::now() < cooldown_until {
-                                return true; // 熔断器仍然处于开启状态
-                            } else {
-                                // 如果半开重试标志为true，说明可以尝试恢复
-                                stats.recovery_state = State::HalfOpen;
-                                stats.recovery_session_starts.clear();
-                                stats.in_cooldown_until = None; // 清除冷却时间
-                                stats.half_open_safe_until =
-                                    Some(Instant::now() + std::time::Duration::from_secs(2)); //Todo: 这里的2秒是个写死的，实际应该根据配置来设置或者给出默认值
-                                return false;
+                            if now < cooldown_until {
+                                return true; // 仍在冷却
                             }
                         } else {
-                            // in_cool_down_until为None也处理为可以半开路, 但是不应该走到这里
+                            // 不应出现：Open 却无冷却时间，立即补齐一个冷却窗口
                             warn!(
-                                "Shouldn't be here, in_cooldown_until is None for process {}",
+                                "Open state without cooldown for process {}. Reinstating cooldown.",
                                 name
                             );
-                            warn!(
-                                "No cooldown time set for process {}, assuming it can be recovered.",
-                                name
-                            );
-                            // 如果半开重试标志为true，说明
-                            stats.recovery_state = State::HalfOpen;
-                            stats.recovery_session_starts.clear();
-                            stats.in_cooldown_until = None; // 清除冷却时间
-                            return false;
+                            stats.in_cooldown_until =
+                                Some(now + std::time::Duration::from_secs(cooldown_secs));
+                            return true;
                         }
+
+                        // 冷却结束 -> 进入半开，允许一次尝试
+                        stats.recovery_state = State::HalfOpen;
+                        stats.recovery_session_starts.clear();
+                        stats.half_open_safe_until = Some(now + std::time::Duration::from_secs(2)); // 可配置化：半开观察期
+                        return false;
                     }
                     State::HalfOpen => {
                         // 半开状态，尝试恢复
                         if let Some(safe_until) = stats.half_open_safe_until {
-                            if Instant::now() < safe_until {
-                                //切换成Open
-                                //可以考虑在后续实现为指数回避 (Todo)
+                            let now = Instant::now();
+                            if now < safe_until {
+                                // 半开尝试失败：在安全时间内再次触发恢复，回退到Open并重新开始冷却
+                                let cooldown_secs = {
+                                    let cfg = self.app_config.read().await;
+                                    cfg.get_process_config_for(name)
+                                        .and_then(|p| match &p.recovery {
+                                            RecoveryConfig::Regular(fields) => {
+                                                Some(fields.cooldown_secs)
+                                            }
+                                            _ => None,
+                                        })
+                                        .unwrap_or(5)
+                                };
                                 warn!(
-                                    "Process {} is in half-open state, but safe time has not passed yet.",
+                                    "Process {} is in half-open; attempt failed within safe window. Back to open (cooldown).",
                                     name
                                 );
                                 stats.recovery_state = State::Open;
-                                stats.half_open_safe_until = None; // 清除半开安全时间
+                                stats.in_cooldown_until =
+                                    Some(now + std::time::Duration::from_secs(cooldown_secs));
+                                stats.half_open_safe_until = None;
                                 stats.recovery_session_starts.clear();
-                                return true; // 半开状态，不能恢复
+                                return true; // 冷却中，阻断恢复
                             } else {
-                                // 半开状态结束，重置为关闭状态
+                                // 半开成功：稳定通过安全窗口，关闭熔断
                                 stats.recovery_state = State::Closed;
                                 stats.half_open_safe_until = None;
                                 stats.recovery_session_starts.clear();
-                                return false; // 可以恢复
+                                return false; // 允许恢复
                             }
                         } else {
                             warn!("Half-open state without safe time set for process {}", name);

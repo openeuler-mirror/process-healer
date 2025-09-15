@@ -32,6 +32,10 @@ aya-build = { git = "https://github.com/aya-rs/aya" }
 anyhow = "1"
 healer-ebpf = { path = "../healer-ebpf" }
 
+[lib]
+name = "healer"
+path = "src/lib.rs"
+
 [[bin]]
 name = "healer"
 path = "src/main.rs"
