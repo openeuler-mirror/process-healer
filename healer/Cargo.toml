@@ -1,7 +1,14 @@
 [package]
 name = "healer"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+license = "MulanPSL-2.0"
+authors = ["XqiLiu"]
+description = "Process self-healing daemon leveraging eBPF for monitoring and recovery"
+repository = "https://github.com/XqiLiu/healer"
+homepage = "https://github.com/XqiLiu/healer"
+keywords = ["ebpf", "monitoring", "daemon", "self-healing", "process"]
+categories = ["system-tools", "monitoring"]
 publish = false
 
 [dependencies]
@@ -25,6 +32,11 @@ bytes = "1.10.1"
 futures = "0.3.31"
 sysinfo = "0.36.0"
 env_logger = "0.11.8"
+clap = { version = "4", features = ["derive"] }
+dirs-next = "2"
+
+[dev-dependencies]
+tempfile = "3.0"
 
 
 [build-dependencies]

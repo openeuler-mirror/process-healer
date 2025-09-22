@@ -3,6 +3,7 @@ use std::default::Default;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use tracing::debug;
 
+#[allow(dead_code)] // Utility function for future use
 pub fn find_pid_by_exe_path(path: &str) -> Option<u32> {
     let process_kind = ProcessRefreshKind::default().with_exe(UpdateKind::Always);
     let rk = RefreshKind::nothing().with_processes(process_kind);
@@ -31,6 +32,7 @@ pub fn truncate_process_name(name: &str) -> String {
 
 /// 根据截断的进程名查找完整的进程配置名
 /// 返回可能匹配的进程配置名列表
+#[allow(dead_code)] // Utility function for future use
 pub fn find_process_configs_by_truncated_name(
     truncated_name: &str,
     process_names: &[String],
@@ -49,6 +51,7 @@ pub fn find_process_configs_by_truncated_name(
 
 /// 构建进程名到配置名的映射表
 /// 用于快速查找截断名对应的完整配置
+#[allow(dead_code)] // Utility function for future use
 pub fn build_process_name_mapping(process_names: &[String]) -> HashMap<String, Vec<String>> {
     let mut mapping = HashMap::new();
 
@@ -75,6 +78,7 @@ pub fn extract_executable_name(command: &str) -> String {
 
 /// 匹配进程名：处理截断名可能对应多个配置的情况
 /// 优先返回精确匹配，如果有多个匹配则返回第一个
+#[allow(dead_code)] // Utility function for future use
 pub fn smart_match_process_name(
     truncated_name: &str,
     name_mapping: &HashMap<String, Vec<String>>,

@@ -242,25 +242,6 @@ impl DependencyCoordinator {
         }
     }
 
-    /// 计算当前仍在阻塞的依赖集合：
-    /// 条件：依赖状态为 Waiting + Requires + hard；目标不是自身；
-    /// 目标是受管（或配置热更后忽略未受管）；且该目标当前也在 deferred 中。
-    fn compute_currently_blocking(&self, name: &str, state: &DeferredState) -> HashSet<String> {
-        let mut set = HashSet::new();
-        for d in &state.deps {
-            if d.status == DepWaitStatus::Waiting
-                && d.cfg.kind == DependencyKind::Requires
-                && d.cfg.hard
-                && d.cfg.target != name
-                && self.managed_targets.contains(&d.cfg.target)
-                && self.deferred.contains_key(&d.cfg.target)
-            {
-                set.insert(d.cfg.target.clone());
-            }
-        }
-        set
-    }
-
     async fn handle_retry(&mut self, name: String) {
         let mut remove_and_forward = None;
         let mut drop_due_to_abort = false;

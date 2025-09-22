@@ -1,5 +1,5 @@
 use crate::{
-    config::{NetworkMonitorConfig, ProcessConfig},
+    config::ProcessConfig,
     event_bus::ProcessEvent,
     monitor::{
         Monitor, ebpf_monitor::EbpfMonitor, network_monitor::NetworkMonitor,
@@ -9,7 +9,6 @@ use crate::{
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;
-use sysinfo::NetworkData;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};

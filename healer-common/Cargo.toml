@@ -1,7 +1,12 @@
 [package]
 name = "healer-common"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+license = "MulanPSL-2.0"
+authors = ["XqiLiu"]
+description = "Common types and utilities for healer daemon"
+repository = "https://github.com/XqiLiu/healer"
+homepage = "https://github.com/XqiLiu/healer"
 
 [features]
 default = []

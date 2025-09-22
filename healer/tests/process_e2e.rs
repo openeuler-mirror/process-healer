@@ -1,36 +1,88 @@
 use std::fs;
 use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
+use tempfile::TempDir;
 
-fn cleanup_stray_processes() {
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let healer_bin = base.join("target/debug/healer");
-    let test_helper = base.join("target/debug/test_process");
-    let dummy_py = base.join("tests/fixtures/dummy_service.py");
+struct TestContext {
+    temp_dir: TempDir,
+    port: u16,
+    children: Vec<Child>,
+}
 
-    let patterns = vec![
-        healer_bin.to_string_lossy().to_string(),
-        test_helper.to_string_lossy().to_string(),
-        dummy_py.to_string_lossy().to_string(),
-    ];
-
-    for pat in patterns {
-        let _ = Command::new("pkill").args(["-9", "-f", &pat]).status();
+impl TestContext {
+    fn new() -> Self {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        
+        // 动态分配端口
+        let port = find_free_port();
+        
+        Self {
+            temp_dir,
+            port,
+            children: Vec::new(),
+        }
+    }
+    
+    fn temp_path(&self) -> &std::path::Path {
+        self.temp_dir.path()
+    }
+    
+    fn logs_dir(&self) -> PathBuf {
+        let logs = self.temp_path().join("logs");
+        fs::create_dir_all(&logs).expect("Failed to create logs directory");
+        logs
+    }
+    
+    fn pids_dir(&self) -> PathBuf {
+        let pids = self.temp_path().join("pids");
+        fs::create_dir_all(&pids).expect("Failed to create pids directory");
+        pids
+    }
+    
+    fn add_child(&mut self, child: Child) {
+        self.children.push(child);
+    }
+    
+    fn cleanup(&mut self) {
+        // 清理所有子进程
+        for mut child in self.children.drain(..) {
+            kill_child(&mut child);
+        }
     }
 }
 
-fn write_file(path: &str, content: &str) {
-    let p = PathBuf::from(path);
-    if let Some(parent) = p.parent() {
+impl Drop for TestContext {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
+fn find_free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .expect("Failed to bind to a random port")
+        .local_addr()
+        .expect("Failed to get local address")
+        .port()
+}
+
+fn workspace_root() -> PathBuf {
+    // CARGO_MANIFEST_DIR 指向 healer 子 crate；集成测试期望使用工作区根目录（其父目录）
+    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    crate_dir.parent().map(|p| p.to_path_buf()).unwrap_or(crate_dir)
+}
+
+fn write_file(path: &PathBuf, content: &str) {
+    if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    fs::write(p, content).expect("write file failed");
+    fs::write(path, content).expect("write file failed");
 }
 
-fn spawn_healer_foreground(config_path: &str) -> Child {
+fn spawn_healer_foreground(config_path: &PathBuf) -> Child {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_healer"));
     cmd.env("HEALER_CONFIG", config_path)
         .env("HEALER_NO_DAEMON", "1")
@@ -40,6 +92,7 @@ fn spawn_healer_foreground(config_path: &str) -> Child {
                 "info,healer::monitor::pid_monitor=debug,healer_action=debug,healer_event=info,dep_coord=debug".to_string()
             }),
         );
+    
     // 测试时可继承 stdio（HEALER_TEST_INHERIT_STDIO=1）
     let inherit_stdio = std::env::var("HEALER_TEST_INHERIT_STDIO")
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
@@ -66,7 +119,7 @@ fn kill_by_pid(pid: i32) {
     }
 }
 
-fn kill_child(mut child: Child) {
+fn kill_child(child: &mut Child) {
     // 先优雅退出（SIGINT），必要时再强杀（SIGKILL）
     let _ = Command::new("/bin/kill")
         .args(["-INT", &child.id().to_string()])
@@ -84,64 +137,101 @@ fn kill_child(mut child: Child) {
     let _ = child.wait();
 }
 
-fn build_temp_config(base: &str) -> String {
+fn build_pid_only_config(ctx: &TestContext) -> String {
+    let base = workspace_root();
+    let logs_dir = ctx.logs_dir();
+    let pids_dir = ctx.pids_dir();
+    let test_id = ctx.temp_path().file_name().unwrap().to_string_lossy();
+    
     format!(
         r#"
 log_level: "info"
-log_directory: "/tmp/healer-tests/logs"
-pid_file_directory: "/tmp/healer-tests/pids"
+log_directory: "{}"
+pid_file_directory: "{}"
 working_directory: "/"
 
 processes:
   - name: "counter"
     enabled: true
-    command: "{base}/target/debug/test_process"
+    command: "{}/target/debug/test_process_{}"
     args: []
     run_as_root: true
     run_as_user: null
     monitor:
       type: "pid"
-      pid_file_path: "/tmp/healer-tests/pids/counter.pid"
+      pid_file_path: "{}/counter.pid"
       interval_secs: 1
     recovery:
       type: "regular"
       retries: 3
       retry_window_secs: 10
       cooldown_secs: 5
+"#,
+        logs_dir.display(),
+        pids_dir.display(),
+        base.display(),
+        test_id,
+        pids_dir.display()
+    )
+}
 
+fn build_network_only_config(ctx: &TestContext) -> String {
+    let logs_dir = ctx.logs_dir();
+    let pids_dir = ctx.pids_dir();
+    
+    format!(
+        r#"
+log_level: "info"
+log_directory: "{}"
+pid_file_directory: "{}"
+working_directory: "/"
+
+processes:
   - name: "dummy_net"
     enabled: true
     command: "/usr/bin/python3"
-    args: ["{base}/tests/fixtures/dummy_service.py"]
+    args: ["{}/dummy_service.py"]
     run_as_root: true
     run_as_user: null
     monitor:
       type: "network"
-      target_url: "http://127.0.0.1:8080/health"
+      target_url: "http://127.0.0.1:{}/health"
       interval_secs: 1
     recovery:
       type: "regular"
       retries: 2
       retry_window_secs: 5
       cooldown_secs: 4
-"#
+"#,
+        logs_dir.display(),
+        pids_dir.display(),
+        ctx.temp_path().display(),
+        ctx.port
     )
 }
 
-fn ensure_test_binaries() {
-    let helper_src = r#"fn main(){
-        use std::{fs,thread,time,process,io::{self,Write}};
+fn ensure_test_binaries(ctx: &TestContext) {
+    let pids_dir = ctx.pids_dir();
+    let helper_src = format!(
+        r#"fn main(){{
+        use std::{{fs,thread,time,process,io::{{self,Write}}}};
         let pid = process::id();
-        let _ = fs::create_dir_all("/tmp/healer-tests/pids");
-        let _ = fs::write("/tmp/healer-tests/pids/counter.pid", pid.to_string());
-        let mut n=0u64; loop{ print!("\\r[PID {}] alive {}", pid,n); let _=io::stdout().flush(); thread::sleep(time::Duration::from_secs(1)); n+=1; }
-    }"#;
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fs::create_dir_all("{}").expect("failed to create pid directory");
+        fs::write("{}/counter.pid", pid.to_string()).expect("failed to write pid file");
+        let mut n=0u64; loop{{ print!("\r[PID {{}}] alive {{}}", pid,n); io::stdout().flush().expect("flush failed"); thread::sleep(time::Duration::from_secs(1)); n+=1; }}
+    }}"#,
+        pids_dir.display(),
+        pids_dir.display()
+    );
+    
+    let base = workspace_root();
     let bin_dir = base.join("target").join("debug");
-    let test_bin_src = base.join("tests/fixtures/test_process.rs");
-    let _ = fs::create_dir_all(test_bin_src.parent().unwrap());
-    write_file(test_bin_src.to_str().unwrap(), helper_src);
-    let out_bin = bin_dir.join("test_process");
+    let test_bin_src = ctx.temp_path().join("test_process.rs");
+    write_file(&test_bin_src, &helper_src);
+    
+    // 为每个测试创建唯一的二进制文件名
+    let test_id = ctx.temp_path().file_name().unwrap().to_string_lossy();
+    let out_bin = bin_dir.join(format!("test_process_{}", test_id));
     let status = Command::new("rustc")
         .args([
             "-O",
@@ -156,52 +246,76 @@ fn ensure_test_binaries() {
 
 #[test]
 fn restart_on_pid_exit_and_circuit_breaker() {
-    cleanup_stray_processes();
-    ensure_test_binaries();
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cfg_text = build_temp_config(base.to_str().unwrap());
-    let cfg_path = base.join("target/debug/it_config.yaml");
-    write_file(cfg_path.to_str().unwrap(), &cfg_text);
+    let mut ctx = TestContext::new();
+    ensure_test_binaries(&ctx);
+    
+    let cfg_text = build_pid_only_config(&ctx);
+    let cfg_path = ctx.temp_path().join("it_config.yaml");
+    write_file(&cfg_path, &cfg_text);
 
     // 先启动 helper，保证 PID 文件存在
-    let helper_bin = base.join("target/debug/test_process");
+    let base = workspace_root();
+    let test_id = ctx.temp_path().file_name().unwrap().to_string_lossy();
+    let helper_bin = base.join("target").join("debug").join(format!("test_process_{}", test_id));
     let mut initial = Command::new(helper_bin)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .expect("failed to spawn initial test_process");
-    // 等待 PID 文件就绪
-    let pid_path = "/tmp/healer-tests/pids/counter.pid";
-    for _ in 0..10 {
-        if fs::read_to_string(pid_path).is_ok() {
-            break;
-        }
-        wait_secs(1);
-    }
+    
+    // 直接写入 PID 文件，消除 helper 自行写入的竞态
+    let pid_path = ctx.pids_dir().join("counter.pid");
+    let initial_pid = initial.id() as i32;
+    fs::write(&pid_path, initial_pid.to_string())
+        .expect("failed to prime PID file for initial helper");
 
-    let mut healer = spawn_healer_foreground(cfg_path.to_str().unwrap());
-    wait_secs(2);
+    let recorded_pid: i32 = fs::read_to_string(&pid_path)
+        .expect("failed to read primed PID file")
+        .trim()
+        .parse()
+        .expect("primed PID file contains invalid pid");
+    assert_eq!(
+        recorded_pid, initial_pid,
+        "PID file content mismatch: expected {}, got {}",
+        initial_pid, recorded_pid
+    );
+
+    println!(
+        "Initial process started with PID: {} (primed at {})",
+        initial_pid,
+        pid_path.display()
+    );
+
+    let healer = spawn_healer_foreground(&cfg_path);
+    ctx.add_child(healer);
+    wait_secs(3); // 增加等待时间以确保 healer 完全启动
 
     // 检查 healer 是否仍在运行
-    match healer.try_wait() {
-        Ok(Some(status)) => {
-            panic!("Healer exited early with status: {:?}", status);
-        }
-        Ok(None) => {
-            println!("Healer is running normally");
-        }
-        Err(e) => {
-            panic!("Error checking healer status: {}", e);
+    if let Some(healer) = ctx.children.last_mut() {
+        match healer.try_wait() {
+            Ok(Some(status)) => {
+                panic!("Healer exited early with status: {:?}", status);
+            }
+            Ok(None) => {
+                println!("Healer is running normally");
+            }
+            Err(e) => {
+                panic!("Error checking healer status: {}", e);
+            }
         }
     }
 
-    let first_pid: i32 = fs::read_to_string(pid_path)
+    let first_pid: i32 = fs::read_to_string(&pid_path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
+    
+    // 验证我们有有效的初始 PID
+    assert!(first_pid > 0, "No valid initial PID found: {}", first_pid);
+    
     if first_pid > 0 {
         kill_by_pid(first_pid);
-        // 回收初始子进程，避免僵尸进程
+        // 等待初始进程退出
         let _ = initial.wait();
     }
 
@@ -210,7 +324,7 @@ fn restart_on_pid_exit_and_circuit_breaker() {
     println!("Waiting for restart. Original PID: {}", first_pid);
     for i in 0..15 {
         wait_secs(1);
-        if let Ok(s) = fs::read_to_string(pid_path) {
+        if let Ok(s) = fs::read_to_string(&pid_path) {
             if let Ok(p) = s.trim().parse::<i32>() {
                 println!("Iteration {}: PID file contains: {}", i + 1, p);
                 if p > 0 && p != first_pid {
@@ -227,7 +341,7 @@ fn restart_on_pid_exit_and_circuit_breaker() {
             println!("Iteration {}: Could not read PID file", i + 1);
         }
         if i % 5 == 4 {
-            let current_pid = fs::read_to_string(pid_path)
+            let current_pid = fs::read_to_string(&pid_path)
                 .ok()
                 .and_then(|s| s.trim().parse().ok())
                 .unwrap_or(0);
@@ -248,7 +362,7 @@ fn restart_on_pid_exit_and_circuit_breaker() {
         let last = new_pid;
         for _ in 0..10 {
             wait_secs(1);
-            if let Ok(s) = fs::read_to_string(pid_path) {
+            if let Ok(s) = fs::read_to_string(&pid_path) {
                 if let Ok(p) = s.trim().parse::<i32>() {
                     if p != last {
                         new_pid = p;
@@ -263,7 +377,7 @@ fn restart_on_pid_exit_and_circuit_breaker() {
     kill_by_pid(new_pid);
     let old = new_pid;
     wait_secs(3);
-    let after: i32 = fs::read_to_string(pid_path)
+    let after: i32 = fs::read_to_string(&pid_path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
@@ -273,7 +387,7 @@ fn restart_on_pid_exit_and_circuit_breaker() {
     let mut restarted = false;
     for _ in 0..6 {
         wait_secs(1);
-        if let Ok(s) = fs::read_to_string(pid_path) {
+        if let Ok(s) = fs::read_to_string(&pid_path) {
             if let Ok(p) = s.trim().parse::<i32>() {
                 if p != old {
                     restarted = true;
@@ -284,24 +398,24 @@ fn restart_on_pid_exit_and_circuit_breaker() {
     }
     assert!(restarted, "healer did not attempt restart after cooldown");
 
-    // 清理：结束 healer 与最后的 helper
-    kill_child(healer);
-    if let Ok(s) = fs::read_to_string(pid_path) {
+    // 清理最后的 helper
+    if let Ok(s) = fs::read_to_string(&pid_path) {
         if let Ok(p) = s.trim().parse::<i32>() {
             kill_by_pid(p);
         }
     }
-    cleanup_stray_processes();
+    // TestContext 的 drop 会自动清理所有子进程
 }
 
 #[test]
 fn network_monitor_detects_crash_and_recovers() {
-    cleanup_stray_processes();
-    ensure_test_binaries();
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dummy_py = r#"import http.server, socketserver, sys
+    let mut ctx = TestContext::new();
+    ensure_test_binaries(&ctx);
+    
+    let dummy_py = format!(
+        r#"import http.server, socketserver, sys
 socketserver.TCPServer.allow_reuse_address = True
-PORT=8080
+PORT={}
 class H(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/health':
@@ -312,20 +426,23 @@ class H(http.server.SimpleHTTPRequestHandler):
             self.send_response(404); self.end_headers()
 with socketserver.TCPServer(("", PORT), H) as srv:
     srv.serve_forever()
-"#;
-    let py_path = base.join("tests/fixtures/dummy_service.py");
-    write_file(py_path.to_str().unwrap(), dummy_py);
+"#,
+        ctx.port
+    );
+    
+    let py_path = ctx.temp_path().join("dummy_service.py");
+    write_file(&py_path, &dummy_py);
 
-    let cfg_text = build_temp_config(base.to_str().unwrap());
-    let cfg_path = base.join("target/debug/net_config.yaml");
-    write_file(cfg_path.to_str().unwrap(), &cfg_text);
+    let cfg_text = build_network_only_config(&ctx);
+    let cfg_path = ctx.temp_path().join("net_config.yaml");
+    write_file(&cfg_path, &cfg_text);
 
-    let healer = spawn_healer_foreground(cfg_path.to_str().unwrap());
+    let healer = spawn_healer_foreground(&cfg_path);
+    ctx.add_child(healer);
     wait_secs(2);
 
-    fn http_get(path: &str) -> Option<String> {
-        use std::net::TcpStream;
-        let mut stream = TcpStream::connect("127.0.0.1:8080").ok()?;
+    fn http_get(port: u16, path: &str) -> Option<String> {
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).ok()?;
         let req = format!(
             "GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
             path
@@ -335,22 +452,24 @@ with socketserver.TCPServer(("", PORT), H) as srv:
         stream.read_to_string(&mut buf).ok()?;
         Some(buf)
     }
-    fn is_healthy() -> bool {
-        http_get("/health")
+    
+    let is_healthy = |port: u16| -> bool {
+        http_get(port, "/health")
             .map(|r| r.starts_with("HTTP/1.1 200") || r.contains("OK"))
             .unwrap_or(false)
-    }
+    };
 
     for _ in 0..10 {
-        if is_healthy() {
+        if is_healthy(ctx.port) {
             break;
         }
         wait_secs(1);
     }
-    let _ = http_get("/crash");
+    
+    let _ = http_get(ctx.port, "/crash");
     let mut healthy = false;
     for _ in 0..20 {
-        if is_healthy() {
+        if is_healthy(ctx.port) {
             healthy = true;
             break;
         }
@@ -358,7 +477,6 @@ with socketserver.TCPServer(("", PORT), H) as srv:
     }
     assert!(healthy, "network monitor did not recover dummy service");
 
-    let _ = http_get("/crash");
-    kill_child(healer);
-    cleanup_stray_processes();
+    let _ = http_get(ctx.port, "/crash");
+    // TestContext 的 drop 会自动清理所有子进程
 }

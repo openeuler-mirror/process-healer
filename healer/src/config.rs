@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
+    #[allow(dead_code)] // Reserved for future use
     pub log_level: Option<String>,
     pub log_directory: Option<PathBuf>,
     pub pid_file_directory: Option<PathBuf>,
@@ -23,6 +24,7 @@ pub struct ProcessConfig {
     pub run_as_user: Option<String>,
     pub run_as_root: bool,
     #[serde(default)]
+    #[allow(dead_code)] // Reserved for future use
     pub working_dir: Option<PathBuf>,
     pub monitor: MonitorConfig,
     #[serde(default)]
