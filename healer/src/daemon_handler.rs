@@ -4,6 +4,7 @@ use daemonize::Daemonize;
 use std::path::PathBuf;
 
 #[derive(Debug)]
+#[allow(dead_code)] // Error fields preserved for error context
 pub enum DaemonError {
     Io(std::io::Error),
     Daemonize(daemonize::Error),

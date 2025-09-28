@@ -38,9 +38,4 @@ impl ConfigManager {
             }
         }
     }
-
-    // 获取当前配置的只读引用
-    pub fn get_config(&self) -> Arc<RwLock<AppConfig>> {
-        Arc::clone(&self.config)
-    }
 }

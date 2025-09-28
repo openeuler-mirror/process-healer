@@ -1,14 +1,11 @@
 use super::Subscriber;
-use crate::config::{self, AppConfig, ProcessConfig, RecoveryConfig, RegularHealerFields};
+use crate::config::{AppConfig, RecoveryConfig};
 use crate::event_bus::ProcessEvent;
 use async_trait::async_trait;
-use serde::de::value::StrDeserializer;
 use std::collections::{HashMap, VecDeque};
-use std::iter::StepBy;
-use std::os::unix::process::{self, CommandExt};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
-use std::{default, fs};
-use std::{sync::Arc, time::Instant};
+use std::{fs, sync::Arc, time::Instant};
 use tokio::sync::RwLock;
 use tokio::sync::{Mutex, broadcast};
 use tracing::{debug, info, warn};

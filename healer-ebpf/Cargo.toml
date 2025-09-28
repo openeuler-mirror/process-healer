@@ -1,7 +1,12 @@
 [package]
 name = "healer-ebpf"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+license = "MulanPSL-2.0"
+authors = ["XqiLiu"]
+description = "eBPF programs for healer daemon monitoring"
+repository = "https://github.com/XqiLiu/healer"
+homepage = "https://github.com/XqiLiu/healer"
 
 [dependencies]
 aya-ebpf = { git = "https://github.com/aya-rs/aya" }
@@ -18,5 +23,6 @@ path = "src/main.rs"
 required-features = ["build-ebpf"]
 
 [features]
-# 默认不构建 eBPF 二进制，除非显式开启该 feature。
+# 默认构建 eBPF 二进制
+default = ["build-ebpf"]
 build-ebpf = []
