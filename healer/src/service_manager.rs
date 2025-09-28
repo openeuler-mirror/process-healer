@@ -2,13 +2,13 @@ use crate::{
     config::AppConfig,
     coordinator::dependency_coordinator::DependencyCoordinator,
     event_bus::ProcessEvent,
-    subscriber::{Subscriber, process_healer::ProcessHealer},
+    subscriber::{process_healer::ProcessHealer, Subscriber},
 };
 use nix::errno::Errno;
-use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use std::sync::Arc;
 use tokio::signal::unix::{self, SignalKind};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, error, info, warn};
 
 /// 服务管理器，负责管理持久性后台任务

@@ -1,5 +1,5 @@
-use anyhow::{Context as _, anyhow};
-use aya_build::{Toolchain, cargo_metadata};
+use anyhow::{anyhow, Context as _};
+use aya_build::{cargo_metadata, Toolchain};
 
 fn main() -> anyhow::Result<()> {
     let cargo_metadata::Metadata { packages, .. } = cargo_metadata::MetadataCommand::new()

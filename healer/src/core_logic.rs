@@ -57,13 +57,17 @@ async fn daemon_core_logic(config: Arc<RwLock<AppConfig>>, config_path: PathBuf)
     info!("Application Core Logic: Persistent services started.");
 
     // 4. 进行初始配置协调
+
     {
-        let config_guard = config.read().await;
-        debug!(
-            "Loaded {} process configurations:",
-            config_guard.processes.len()
-        );
-        for (i, process_config) in config_guard.processes.iter().enumerate() {
+        let processes_snapshot = {
+            let guard = config.read().await;
+            debug!(
+                "Initial load: {} process configurations",
+                guard.processes.len()
+            );
+            guard.processes.clone()
+        };
+        for (i, process_config) in processes_snapshot.iter().enumerate() {
             debug!(
                 "Process {}: name='{}', command='{}'",
                 i + 1,
@@ -79,7 +83,7 @@ async fn daemon_core_logic(config: Arc<RwLock<AppConfig>>, config_path: PathBuf)
                 );
             }
         }
-        monitor_manager.reconcile(&config_guard.processes).await?;
+        monitor_manager.reconcile(&processes_snapshot).await?;
     }
     info!("Application Core Logic: Initial reconciliation completed.");
 
@@ -95,9 +99,12 @@ async fn daemon_core_logic(config: Arc<RwLock<AppConfig>>, config_path: PathBuf)
                     continue;
                 }
 
-                // 重新协调监控器
-                let config_guard = config.read().await;
-                if let Err(e) = monitor_manager.reconcile(&config_guard.processes).await {
+                // 重新协调监控器（同样避免持 read 锁跨 await）
+                let processes_snapshot = {
+                    let guard = config.read().await;
+                    guard.processes.clone()
+                };
+                if let Err(e) = monitor_manager.reconcile(&processes_snapshot).await {
                     error!("Core Logic: Failed to reconcile monitors: {}", e);
                 }
             }

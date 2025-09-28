@@ -15,7 +15,7 @@ mod utils;
 use config::AppConfig;
 use daemon_handler::run_as_daemon;
 use std::env;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use tokio::sync::RwLock;
 
 use clap::Parser;
@@ -38,11 +38,15 @@ struct Cli {
 }
 
 fn candidate_config_paths(explicit: Option<PathBuf>) -> Vec<PathBuf> {
-    if let Some(p) = explicit { return vec![p]; }
+    if let Some(p) = explicit {
+        return vec![p];
+    }
 
     let mut cands = Vec::new();
     // 1. Environment variable
-    if let Ok(p) = env::var("HEALER_CONFIG") { cands.push(PathBuf::from(p)); }
+    if let Ok(p) = env::var("HEALER_CONFIG") {
+        cands.push(PathBuf::from(p));
+    }
     // 2. Current working directory
     cands.push(PathBuf::from("./config.yaml"));
     cands.push(PathBuf::from("./healer.yaml"));
@@ -50,16 +54,28 @@ fn candidate_config_paths(explicit: Option<PathBuf>) -> Vec<PathBuf> {
     cands.push(PathBuf::from("/etc/healer/config.yaml"));
     cands.push(PathBuf::from("/etc/healer/healer.yaml"));
     // 4. XDG config home if set
-    if let Ok(home) = env::var("XDG_CONFIG_HOME") { cands.push(PathBuf::from(home).join("healer/config.yaml")); }
+    if let Ok(home) = env::var("XDG_CONFIG_HOME") {
+        cands.push(PathBuf::from(home).join("healer/config.yaml"));
+    }
     // 5. ~/.config/healer/config.yaml
-    if let Some(home_dir) = dirs_next::home_dir() { cands.push(home_dir.join(".config/healer/config.yaml")); }
+    if let Some(home_dir) = dirs_next::home_dir() {
+        cands.push(home_dir.join(".config/healer/config.yaml"));
+    }
     cands
 }
 
 fn resolve_config_path(cli: &Cli) -> PathBuf {
-    if let Some(explicit) = &cli.config { return explicit.clone(); }
-    if let Ok(env_path) = env::var("HEALER_CONFIG") { return PathBuf::from(env_path); }
-    for cand in candidate_config_paths(None) { if cand.exists() { return cand; } }
+    if let Some(explicit) = &cli.config {
+        return explicit.clone();
+    }
+    if let Ok(env_path) = env::var("HEALER_CONFIG") {
+        return PathBuf::from(env_path);
+    }
+    for cand in candidate_config_paths(None) {
+        if cand.exists() {
+            return cand;
+        }
+    }
     // Fallback default (will likely fail later if missing)
     PathBuf::from("config.yaml")
 }
@@ -71,7 +87,10 @@ fn main() {
     let raw_config_path = resolve_config_path(&cli);
     println!("Config resolution: using {:?}", raw_config_path);
 
-    if cli.print_config_path { println!("{:?}", raw_config_path); return; }
+    if cli.print_config_path {
+        println!("{:?}", raw_config_path);
+        return;
+    }
 
     // Expand & canonicalize for safety
     let absolute_config_path = match std::fs::canonicalize(&raw_config_path) {
@@ -82,12 +101,16 @@ fn main() {
         }
     };
 
-    let initial_config = AppConfig::load_from_file(&absolute_config_path).expect("初始配置加载失败");
+    let initial_config =
+        AppConfig::load_from_file(&absolute_config_path).expect("初始配置加载失败");
     let shared_config = std::sync::Arc::new(RwLock::new(initial_config));
 
     // Detect foreground from either flag or env
     let env_foreground = matches!(
-        env::var("HEALER_NO_DAEMON").unwrap_or_else(|_| "0".into()).to_ascii_lowercase().as_str(),
+        env::var("HEALER_NO_DAEMON")
+            .unwrap_or_else(|_| "0".into())
+            .to_ascii_lowercase()
+            .as_str(),
         "1" | "true" | "yes"
     );
     let run_foreground = cli.foreground || env_foreground;
@@ -103,7 +126,8 @@ fn main() {
 
     let config_for_closure = std::sync::Arc::clone(&shared_config);
     let path_for_closure = absolute_config_path.clone();
-    let core_logic_closure = move || core_logic::async_runtime(config_for_closure, path_for_closure);
+    let core_logic_closure =
+        move || core_logic::async_runtime(config_for_closure, path_for_closure);
     match run_as_daemon(shared_config, core_logic_closure) {
         Ok(_) => println!("Main program: Core logic quit"),
         Err(e) => println!("Main program: Core logic error with {:?}", e),

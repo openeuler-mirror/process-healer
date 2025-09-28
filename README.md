@@ -152,6 +152,90 @@ HEALER_TEST_INHERIT_STDIO=1 RUST_LOG=info cargo test -p healer --test process_e2
 # ebpf测试检查的命令示例（需要HEALER_EBPF_E2E=1，同时可执行文件要以sudo权限执行）
 HEALER_EBPF_E2E=1 HEALER_TEST_INHERIT_STDIO=1 RUST_LOG=info CARGO_TERM_COLOR=always cargo test -p healer --test ebpf_e2e --config 'target."cfg(all())".runner="sudo -E"' -- --ignored --nocapture --color=always
 ```
+
+### 测试用例
+
+#### 单元测试
+1. **defers_then_releases_on_timeout_skip**
+   - 用两条进程配置：A 依赖 B（Requires，hard=true，max_wait_secs=1，on_failure=Skip）。
+   - 先发出 B 下线事件，标记 B 正在恢复。
+   - 再发出 A 下线事件，期望此时 A 被“延后”（短超时内不应被转发）。
+   - 等待一段时间（约 5–8 秒窗口），因为策略是 Skip 且 B 没恢复，A 会在超时后被放行转发。
+   - 断言：前期未转发 A，后期成功转发 A（验证“延后 + 超时释放”的策略生效）。
+
+#### 集成测试
+
+1. **restart_on_pid_exit_and_circuit_breaker**
+   - 步骤
+     - 启动被测进程与 Healer（前台模式便于观测）。
+     - 第一次 kill 被测进程，验证 Healer 自动拉起（PID 变化、日志出现 “Successfully restarted process”）。
+     - 在 retry_window_secs 窗口内连续多次 kill，触发 retries 上限。
+     - 观察进入 Open（冷却）期，期间再次 kill 不应触发立即拉起。
+     - 冷却结束后再次 kill，Healer 应恢复重试并拉起。
+   - 期望
+     - 第一次 kill 后成功拉起（PID 变化）。
+     - 窗口内多次 kill 触发熔断，冷却期间不再拉起。
+     - 冷却结束后恢复拉起。
+   - 断言要点
+     - 读取 PID 文件比对前后 PID。
+     - 日志含 “Circuit breaker is open” 与恢复成功日志各至少一次。
+
+2. **network_monitor_detects_crash_and_recovers**
+   - 步骤
+     - 正常启动服务与 Healer，健康检查通过。
+     - 让 HTTP 服务自杀/退出，使连接失败（例如监听套接字关闭）。
+     - NetworkMonitor 发送 ProcessDisconnected 事件，Healer 尝试拉起目标进程（按 command+args）。
+   - 期望
+     - 服务退出后，收到 ProcessDisconnected 事件。
+     - Healer 触发恢复流程并拉起（若此服务即为被监控与被恢复的同一目标）。
+   - 断言要点
+     - 订阅 coordinator_event_sender，捕获 ProcessDisconnected { name, url }。
+     - 拉起后新进程输出被重定向到日志文件。
+
+3. **ebpf_detects_exit_and_recovers**
+   - 步骤
+     - 检查环境变量 HEALER_EBPF_E2E=1，仅在显式开启时运行（需要 root 权限）。
+     - 清理可能残留的测试进程（healer 和 test_process）。
+     - 构建 eBPF 监控配置，指定 monitor.type: "ebpf"，recovery 策略为 retries=3, retry_window_secs=10, cooldown_secs=5。
+     - 先启动被监控的 test_process 进程，等待其创建 PID 文件。
+     - 启动 Healer（前台模式，便于观测），等待 3 秒让 eBPF 初始化和 watch 生效。
+     - 记录基线 PID，通过 kill -9 强制终止被监控进程。
+     - 等待最多 20 秒，检查 PID 文件变化，验证 Healer 通过 eBPF 事件检测到进程退出并拉起新进程。
+   - 期望
+     - eBPF tracepoint 成功附加到内核 sched_process_exit 事件。
+     - 进程被 kill 后，eBPF 监控器捕获退出事件并发送 ProcessDown 事件。
+     - Healer 接收到事件后成功拉起新进程（PID 发生变化）。
+     - 整个恢复过程在 20 秒内完成。
+   - 断言要点
+     - 基线 PID 必须大于 0。
+     - 恢复后的新 PID 必须不同于原 PID。
+     - 测试结束时正确清理所有测试进程。
+   - 测试环境要求
+     - 必须设置环境变量 `HEALER_EBPF_E2E=1` 才会执行，需要 root 权限。
+
+4. **hot_reload_allows_new_process_recovery**
+   - 步骤
+     - 启动 `ProcessHealer` 并加载仅包含进程 `alpha` 的初始配置。
+     - 通过热更新替换为只包含进程 `beta` 的新配置，其恢复命令会在临时目录中写入标记文件。
+     - 先对移除的 `alpha` 执行一次恢复以确保熔断状态被清理，再对 `beta` 调用恢复。
+   - 期望
+     - 旧进程的熔断状态被移除，不再阻塞新的恢复请求。
+     - `beta` 的恢复命令被执行，标记文件被正确写入。
+   - 断言要点
+     - 临时目录中不存在旧标记文件。
+     - 恢复后标记文件出现且内容包含 `hot` 字样。
+
+5. **reconcile_starts_stops_pid_and_network_monitors**
+   - 步骤
+     - 构造包含 PID 与 Network 两类启用进程的配置，调用 `MonitorManager::reconcile`，确认对应监控器被创建。
+     - 再次调用 `reconcile` 时移除 PID 进程，仅保留 Network 进程。
+   - 期望
+     - 初次调度后，PID 与网络监控任务均处于运行状态，禁用进程不会被启动。
+     - 第二次调度后，移除的 PID 监控任务被停止，仅保留网络监控任务。
+   - 断言要点
+     - 通过 `running_monitor_names` 检查当前活跃监控器集合的变化。
+     - 测试结束调用 `shutdown` 释放后台任务。
+
 ## 软件架构
 Healer 是一个面向关键进程自愈场景的轻量守护进程，当前已实现的核心要点：
 
