@@ -43,8 +43,10 @@ pub fn run_as_daemon<F>(
 where
     F: FnOnce() + Send + 'static,
 {
-    let config_guard = config.blocking_read();
-    let daemon_config = config_guard.to_daemonize_config();
+    let daemon_config = {
+        let config_guard = config.blocking_read();
+        config_guard.to_daemonize_config()
+    };
 
     println!("Starting the daemon process");
     println!("PID file: {:?}", daemon_config.pid_file);

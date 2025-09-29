@@ -3,7 +3,7 @@ use healer::config::{
     ProcessConfig, RawDependency, RecoveryConfig, RegularHealerFields,
 };
 use healer::coordinator::dependency_coordinator::DependencyCoordinator;
-use healer::event_bus::{ProcessEvent, create_event_sender};
+use healer::event_bus::{create_event_sender, ProcessEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;

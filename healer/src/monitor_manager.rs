@@ -2,8 +2,8 @@ use crate::{
     config::ProcessConfig,
     event_bus::ProcessEvent,
     monitor::{
-        Monitor, ebpf_monitor::EbpfMonitor, network_monitor::NetworkMonitor,
-        pid_monitor::PidMonitor,
+        ebpf_monitor::EbpfMonitor, network_monitor::NetworkMonitor, pid_monitor::PidMonitor,
+        Monitor,
     },
 };
 use anyhow::Result;
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 // 监控器管理器，负责统一管理不同类型的监控器
 pub struct MonitorManager {
@@ -50,15 +50,54 @@ impl MonitorManager {
         })
     }
 
+    /// Construct a monitor manager without attempting to initialize the global eBPF monitor.
+    /// This is primarily intended for tests or environments where the eBPF artifacts are
+    /// unavailable (for example, non-root CI runtimes).
+    #[allow(dead_code)]
+    pub fn new_without_ebpf(event_sender: broadcast::Sender<ProcessEvent>) -> Self {
+        Self {
+            ebpf_monitor: None,
+            watched_ebpf_configs: HashMap::new(),
+            running_monitors: HashMap::new(),
+            event_sender,
+        }
+    }
+
+    /// Returns the names of non-eBPF monitors that are currently running.
+    #[allow(dead_code)]
+    pub fn running_monitor_names(&self) -> Vec<String> {
+        self.running_monitors.keys().cloned().collect()
+    }
+
+    /// Returns the names of processes currently watched by the eBPF monitor.
+    #[allow(dead_code)]
+    pub fn watched_ebpf_names(&self) -> Vec<String> {
+        self.watched_ebpf_configs.keys().cloned().collect()
+    }
+
     // 根据新的配置更新所有监控器
     pub async fn reconcile(&mut self, processes: &[ProcessConfig]) -> Result<()> {
         info!("MonitorManager: Starting reconciliation...");
+        debug!(
+            total_processes = processes.len(),
+            "Reconcile invoked with processes"
+        );
+        for (idx, p) in processes.iter().enumerate() {
+            debug!(index = idx, name = %p.name, enabled = p.enabled, monitor = ?p.monitor, "Incoming process config");
+        }
 
         // 分离不同类型的监控配置, ebpf和其他的pid  network监视器都略有不同
         let (ebpf_configs, not_ebpf_configs): (Vec<_>, Vec<_>) = processes
             .iter()
             .filter(|p| p.enabled)
             .partition(|p| p.get_ebpf_monitor_config().is_some());
+
+        debug!(
+            enabled_total = ebpf_configs.len() + not_ebpf_configs.len(),
+            ebpf_count = ebpf_configs.len(),
+            other_count = not_ebpf_configs.len(),
+            "Enabled processes split into ebpf / others"
+        );
 
         // 更新 eBPF 监控器
         self.reconcile_ebpf_monitors(ebpf_configs).await?;
@@ -79,7 +118,7 @@ impl MonitorManager {
             warn!("MonitorManager: eBPF monitor not available, skipping eBPF reconciliation.");
             return Ok(());
         };
-
+        debug!(current_watched = %self.watched_ebpf_configs.keys().cloned().collect::<Vec<_>>().join(","), desired = %desired_configs.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(","), "Reconciling eBPF monitors");
         // 构建期望的配置映射
         let desired_configs_map: HashMap<String, ProcessConfig> = desired_configs
             .into_iter()
@@ -94,6 +133,9 @@ impl MonitorManager {
             .cloned()
             .collect();
 
+        if !configs_to_remove.is_empty() {
+            debug!(to_remove = %configs_to_remove.join(","), "eBPF configs scheduled for removal");
+        }
         for name in configs_to_remove {
             if let Some(config) = self.watched_ebpf_configs.remove(&name) {
                 if let Some(ebpf_config) = config.get_ebpf_monitor_config() {
@@ -111,6 +153,7 @@ impl MonitorManager {
         // 添加新的监控
         for (name, config) in desired_configs_map {
             if !self.watched_ebpf_configs.contains_key(&name) {
+                debug!(name = %name, "eBPF watch not present - will add");
                 if let Some(ebpf_config) = config.get_ebpf_monitor_config() {
                     info!("MonitorManager: Adding eBPF watch for process '{}'", name);
                     match ebpf_monitor.watch_config(ebpf_config).await {
@@ -125,6 +168,8 @@ impl MonitorManager {
                         }
                     }
                 }
+            } else {
+                debug!(name = %name, "eBPF watch already exists (no change)");
             }
         }
 
@@ -139,6 +184,8 @@ impl MonitorManager {
             .map(|config| (config.name.clone(), config))
             .collect();
 
+        debug!(current_running = %self.running_monitors.keys().cloned().collect::<Vec<_>>().join(","), desired = %desired_configs_map.keys().cloned().collect::<Vec<_>>().join(","), "Reconciling non-eBPF monitors");
+
         // 停止不再需要的监控器
         let monitors_to_stop: Vec<String> = self
             .running_monitors
@@ -146,7 +193,9 @@ impl MonitorManager {
             .filter(|name| !desired_configs_map.contains_key(*name))
             .cloned()
             .collect();
-
+        if !monitors_to_stop.is_empty() {
+            debug!(to_stop = %monitors_to_stop.join(","), "Non-eBPF monitors scheduled to stop");
+        }
         for name in monitors_to_stop {
             info!(
                 "MonitorManager: Stopping not-ebpf monitor for process '{}'",
@@ -163,8 +212,19 @@ impl MonitorManager {
         // 启动新的监控器或重启已结束的监控器
         for (name, process_config) in desired_configs_map {
             let should_start = match self.running_monitors.get(&name) {
-                Some(handle) => handle.is_finished(),
-                None => true,
+                Some(handle) => {
+                    let finished = handle.is_finished();
+                    if finished {
+                        debug!(process = %name, "Existing monitor task finished - will restart");
+                    } else {
+                        debug!(process = %name, "Monitor already running - no restart needed");
+                    }
+                    finished
+                }
+                None => {
+                    debug!(process = %name, "No existing monitor - will start");
+                    true
+                }
             };
 
             if should_start {
@@ -184,6 +244,8 @@ impl MonitorManager {
                     let monitor = NetworkMonitor::new(network_config, self.event_sender.clone());
                     let handle = tokio::spawn(monitor.run());
                     self.running_monitors.insert(name.clone(), handle);
+                } else {
+                    debug!(process = %name, "Process has no recognized monitor config after filtering (unexpected)");
                 }
             }
         }

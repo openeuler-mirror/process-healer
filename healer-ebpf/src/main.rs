@@ -5,10 +5,10 @@
 #[cfg(feature = "build-ebpf")]
 mod ebpf {
     use aya_ebpf::{
-        EbpfContext,
         macros::{map, tracepoint},
         maps::{HashMap, PerfEventArray},
         programs::TracePointContext,
+        EbpfContext,
     };
     use aya_log_ebpf::info;
     use healer_common::ProcessExitEvent;

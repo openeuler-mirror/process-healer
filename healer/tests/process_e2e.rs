@@ -16,37 +16,37 @@ struct TestContext {
 impl TestContext {
     fn new() -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        
+
         // 动态分配端口
         let port = find_free_port();
-        
+
         Self {
             temp_dir,
             port,
             children: Vec::new(),
         }
     }
-    
+
     fn temp_path(&self) -> &std::path::Path {
         self.temp_dir.path()
     }
-    
+
     fn logs_dir(&self) -> PathBuf {
         let logs = self.temp_path().join("logs");
         fs::create_dir_all(&logs).expect("Failed to create logs directory");
         logs
     }
-    
+
     fn pids_dir(&self) -> PathBuf {
         let pids = self.temp_path().join("pids");
         fs::create_dir_all(&pids).expect("Failed to create pids directory");
         pids
     }
-    
+
     fn add_child(&mut self, child: Child) {
         self.children.push(child);
     }
-    
+
     fn cleanup(&mut self) {
         // 清理所有子进程
         for mut child in self.children.drain(..) {
@@ -72,7 +72,10 @@ fn find_free_port() -> u16 {
 fn workspace_root() -> PathBuf {
     // CARGO_MANIFEST_DIR 指向 healer 子 crate；集成测试期望使用工作区根目录（其父目录）
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    crate_dir.parent().map(|p| p.to_path_buf()).unwrap_or(crate_dir)
+    crate_dir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or(crate_dir)
 }
 
 fn write_file(path: &PathBuf, content: &str) {
@@ -92,7 +95,7 @@ fn spawn_healer_foreground(config_path: &PathBuf) -> Child {
                 "info,healer::monitor::pid_monitor=debug,healer_action=debug,healer_event=info,dep_coord=debug".to_string()
             }),
         );
-    
+
     // 测试时可继承 stdio（HEALER_TEST_INHERIT_STDIO=1）
     let inherit_stdio = std::env::var("HEALER_TEST_INHERIT_STDIO")
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
@@ -142,7 +145,7 @@ fn build_pid_only_config(ctx: &TestContext) -> String {
     let logs_dir = ctx.logs_dir();
     let pids_dir = ctx.pids_dir();
     let test_id = ctx.temp_path().file_name().unwrap().to_string_lossy();
-    
+
     format!(
         r#"
 log_level: "info"
@@ -178,7 +181,7 @@ processes:
 fn build_network_only_config(ctx: &TestContext) -> String {
     let logs_dir = ctx.logs_dir();
     let pids_dir = ctx.pids_dir();
-    
+
     format!(
         r#"
 log_level: "info"
@@ -223,12 +226,12 @@ fn ensure_test_binaries(ctx: &TestContext) {
         pids_dir.display(),
         pids_dir.display()
     );
-    
+
     let base = workspace_root();
     let bin_dir = base.join("target").join("debug");
     let test_bin_src = ctx.temp_path().join("test_process.rs");
     write_file(&test_bin_src, &helper_src);
-    
+
     // 为每个测试创建唯一的二进制文件名
     let test_id = ctx.temp_path().file_name().unwrap().to_string_lossy();
     let out_bin = bin_dir.join(format!("test_process_{}", test_id));
@@ -248,7 +251,7 @@ fn ensure_test_binaries(ctx: &TestContext) {
 fn restart_on_pid_exit_and_circuit_breaker() {
     let mut ctx = TestContext::new();
     ensure_test_binaries(&ctx);
-    
+
     let cfg_text = build_pid_only_config(&ctx);
     let cfg_path = ctx.temp_path().join("it_config.yaml");
     write_file(&cfg_path, &cfg_text);
@@ -256,13 +259,16 @@ fn restart_on_pid_exit_and_circuit_breaker() {
     // 先启动 helper，保证 PID 文件存在
     let base = workspace_root();
     let test_id = ctx.temp_path().file_name().unwrap().to_string_lossy();
-    let helper_bin = base.join("target").join("debug").join(format!("test_process_{}", test_id));
+    let helper_bin = base
+        .join("target")
+        .join("debug")
+        .join(format!("test_process_{}", test_id));
     let mut initial = Command::new(helper_bin)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .expect("failed to spawn initial test_process");
-    
+
     // 直接写入 PID 文件，消除 helper 自行写入的竞态
     let pid_path = ctx.pids_dir().join("counter.pid");
     let initial_pid = initial.id() as i32;
@@ -309,10 +315,10 @@ fn restart_on_pid_exit_and_circuit_breaker() {
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
-    
+
     // 验证我们有有效的初始 PID
     assert!(first_pid > 0, "No valid initial PID found: {}", first_pid);
-    
+
     if first_pid > 0 {
         kill_by_pid(first_pid);
         // 等待初始进程退出
@@ -410,8 +416,8 @@ fn restart_on_pid_exit_and_circuit_breaker() {
 #[test]
 fn network_monitor_detects_crash_and_recovers() {
     let mut ctx = TestContext::new();
-    ensure_test_binaries(&ctx);
-    
+    // ensure_test_binaries(&ctx);
+
     let dummy_py = format!(
         r#"import http.server, socketserver, sys
 socketserver.TCPServer.allow_reuse_address = True
@@ -429,7 +435,7 @@ with socketserver.TCPServer(("", PORT), H) as srv:
 "#,
         ctx.port
     );
-    
+
     let py_path = ctx.temp_path().join("dummy_service.py");
     write_file(&py_path, &dummy_py);
 
@@ -452,7 +458,7 @@ with socketserver.TCPServer(("", PORT), H) as srv:
         stream.read_to_string(&mut buf).ok()?;
         Some(buf)
     }
-    
+
     let is_healthy = |port: u16| -> bool {
         http_get(port, "/health")
             .map(|r| r.starts_with("HTTP/1.1 200") || r.contains("OK"))
@@ -465,7 +471,7 @@ with socketserver.TCPServer(("", PORT), H) as srv:
         }
         wait_secs(1);
     }
-    
+
     let _ = http_get(ctx.port, "/crash");
     let mut healthy = false;
     for _ in 0..20 {

@@ -7,10 +7,13 @@ use std::time::Duration;
 fn workspace_root() -> PathBuf {
     // CARGO_MANIFEST_DIR 指向 healer 子 crate；集成测试期望使用工作区根目录（其父目录）
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    crate_dir.parent().map(|p| p.to_path_buf()).unwrap_or(crate_dir)
+    crate_dir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or(crate_dir)
 }
 fn cleanup_stray_processes() {
-    let base =  workspace_root();
+    let base = workspace_root();
     let healer_bin = base.join("target/debug/healer");
     let test_helper = base.join("target/debug/test_process");
 
@@ -121,7 +124,7 @@ fn ensure_test_binaries() {
             err
         );
     }
-    
+
     // 使用与 process_e2e.rs 相同的测试二进制代码
     let helper_src = format!(
         r#"fn main(){{
@@ -134,19 +137,19 @@ fn ensure_test_binaries() {
         pids_dir.display(),
         pids_dir.display()
     );
-    
+
     let bin_dir = base.join("target").join("debug");
     let test_bin_src = helper_src_dir.join("test_process_ebpf.rs");
     write_file(test_bin_src.to_str().unwrap(), &helper_src);
-    
+
     // 为 eBPF 测试使用独立的二进制名称
     let out_bin = bin_dir.join("test_process_ebpf");
-    
+
     // 如果已存在可执行文件，跳过编译，避免在 sudo 环境下找不到 rustc
     if out_bin.exists() {
         return;
     }
-    
+
     // 尝试编译，如果失败则提供有用的错误信息
     let result = try_compile_test_binary(&test_bin_src, &out_bin);
     match result {
@@ -154,9 +157,11 @@ fn ensure_test_binaries() {
         Err(e) => {
             eprintln!("Warning: Failed to compile eBPF test binary: {}", e);
             eprintln!("Hint: If running with sudo, try pre-compiling the binary:");
-            eprintln!("  rustc -O {} -o {}", 
-                     test_bin_src.display(), 
-                     out_bin.display());
+            eprintln!(
+                "  rustc -O {} -o {}",
+                test_bin_src.display(),
+                out_bin.display()
+            );
             eprintln!("Or set RUSTC environment variable to point to rustc executable.");
             panic!("Cannot proceed without test binary");
         }
@@ -169,7 +174,9 @@ fn try_compile_test_binary(src: &std::path::Path, out: &std::path::Path) -> Resu
         // 首先尝试环境变量
         std::env::var("RUSTC").ok(),
         // 尝试使用 which 命令
-        Command::new("which").arg("rustc").output()
+        Command::new("which")
+            .arg("rustc")
+            .output()
             .ok()
             .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
             .filter(|s| !s.is_empty()),
@@ -181,11 +188,11 @@ fn try_compile_test_binary(src: &std::path::Path, out: &std::path::Path) -> Resu
         // 最后尝试直接调用
         Some("rustc".to_string()),
     ];
-    
+
     for rustc_opt in rustc_candidates.into_iter().flatten() {
         if let Ok(status) = Command::new(&rustc_opt)
             .args(["-O", src.to_str().unwrap(), "-o", out.to_str().unwrap()])
-            .status() 
+            .status()
         {
             if status.success() {
                 return Ok(());
@@ -194,7 +201,7 @@ fn try_compile_test_binary(src: &std::path::Path, out: &std::path::Path) -> Resu
             }
         }
     }
-    
+
     Err("Could not find rustc executable".to_string())
 }
 

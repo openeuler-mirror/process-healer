@@ -1,9 +1,9 @@
 use super::Monitor;
 use crate::{config::EbpfMonitorConfig, event_bus::ProcessEvent, publisher::Publisher, utils};
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use async_trait::async_trait;
-use aya::{Ebpf, maps::PerfEventArray, programs::TracePoint, util::online_cpus};
+use aya::{maps::PerfEventArray, programs::TracePoint, util::online_cpus, Ebpf};
 use bytes::BytesMut;
 use healer_common::ProcessExitEvent;
 use std::time::Duration;
