@@ -1,0 +1,36 @@
+stages:
+  - build
+  - package
+
+variables:
+  CARGO_TERM_COLOR: always
+
+build-job:
+  stage: build
+  image: registry.cn-hangzhou.aliyuncs.com/gitee-go/fedora:39
+  script:
+    - dnf install -y cargo rust clang llvm gcc make pkg-config openssl-devel rpm-build
+    - rustup default stable || true   # 如果镜像内已带 Rust，可忽略
+    - cargo fmt --all -- --check
+    - cargo check --workspace
+    - cargo test --workspace -- --skip ebpf   # 可按需调整/筛选
+  artifacts:
+    expire_in: 7 days
+    paths:
+      - target/debug
+      - target/release
+
+package-job:
+  stage: package
+  image: registry.cn-hangzhou.aliyuncs.com/gitee-go/fedora:39
+  needs: [build-job]
+  script:
+    - dnf install -y cargo rust clang llvm gcc make rpm-build
+    - bash scripts/build-rpm.sh
+    - mkdir -p ci_artifacts
+    - cp -r $HOME/rpmbuild/RPMS ci_artifacts/RPMS
+    - cp -r $HOME/rpmbuild/SRPMS ci_artifacts/SRPMS
+  artifacts:
+    expire_in: 30 days
+    paths:
+      - ci_artifacts

@@ -2,6 +2,71 @@
 ## 介绍
 A high-performance daemon leveraging eBPF for reliable, low-overhead monitoring and automatic recovery of critical processes to ensure service continuity.
 
+## 快速上手指南
+
+下面的流程使用仓库内的示例进程 `simple_test_process`，演示 Healer 如何监控并自动拉起目标进程。
+
+### 前置条件
+- Linux x86_64（Fedora/CentOS 等 systemd 发行版均可）
+- Rust stable toolchain（用于编译 Healer 与示例进程）
+
+### 步骤
+
+1. 获取代码并编译所需二进制：
+  ```bash
+  git clone https://gitee.com/你/仓库地址.git
+  cd healer-process
+  cargo build -p healer -p simple_test_process
+  ```
+
+2. 使用仓库自带脚本生成示例所需目录（默认创建在项目根目录的 `healer-demo/` 下）：
+  ```bash
+  chmod +x simple_test_process/init.sh
+  ./simple_test_process/init.sh
+  ```
+
+3. 编写快速体验配置 `quickstart-config.yaml`：
+  ```bash
+  cat <<EOF > quickstart-config.yaml
+  log_level: "info"
+  log_directory: "$(pwd)/healer-demo/logs"
+  pid_file_directory: "$(pwd)/healer-demo/run"
+  working_directory: "$(pwd)"
+  processes:
+    - name: "demo_counter"
+      enabled: true
+      command: "$(pwd)/target/debug/simple_test_process"
+      args: []
+      run_as_root: false
+      monitor:
+        type: "pid"
+        pid_file_path: "$(pwd)/healer-demo/run/simple_counter.pid"
+        interval_secs: 3
+      recovery:
+        type: "regular"
+        retries: 3
+        retry_window_secs: 60
+        cooldown_secs: 180
+  EOF
+  ```
+
+4. 在终端 A 启动示例进程（它会写入 PID 文件并持续输出心跳）：
+  ```bash
+  target/debug/simple_test_process
+  ```
+
+5. 在终端 B 前台启动 Healer 并加载刚才的配置：
+  ```bash
+  HEALER_NO_DAEMON=1 HEALER_CONFIG=$(pwd)/quickstart-config.yaml RUST_LOG=info target/debug/healer
+  ```
+
+6. 体验自动恢复：在终端 A 或新的终端里执行并观察 Healer 日志出现重启信息（PID 会变化）：
+  ```bash
+  pkill -x simple_test_process
+  ```
+
+  Healer 会捕获退出事件并重新拉起示例进程。按 `Ctrl+C` 可结束 Healer，结束后记得清理临时文件/目录。
+
 ## 安装与编译
 
 ### 从源码编译

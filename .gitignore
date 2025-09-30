@@ -1,3 +1,7 @@
 /target
 .vscode/
 /healer/target
+/simple_test/target
+/healer-demo
+/healer-demo/*
+quickstart-config.yaml
