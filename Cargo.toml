@@ -3,6 +3,7 @@ members = [
     "healer",
     "healer-ebpf",
     "healer-common",
+    "simple_test_process",
 ]
 resolver = "2"
 default-members = ["healer", "healer-common"]
